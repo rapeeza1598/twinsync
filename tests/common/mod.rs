@@ -72,6 +72,42 @@ impl Fixture {
         }
     }
 
+    /// A fixture whose single destination (and database) live at the given,
+    /// persistent locations. Used by the real-filesystem compatibility tests.
+    pub fn on_volume(dest_dir: PathBuf, state_dir: PathBuf, src_dir: PathBuf) -> Self {
+        for d in [&dest_dir, &state_dir, &src_dir] {
+            fs::create_dir_all(d).unwrap();
+        }
+        let db = Db::open(&state_dir.join("twinsync.sqlite3")).unwrap();
+        let project = match db.first_project().unwrap() {
+            Some(p) => p,
+            None => db.create_project("TwinSync", Some(&src_dir)).unwrap(),
+        };
+        let row = match db.destinations(&project.id).unwrap().into_iter().next() {
+            Some(r) => r,
+            None => {
+                let r = DestinationRow::new(&project.id, Slot::A);
+                db.upsert_destination(&r).unwrap();
+                r
+            }
+        };
+        Fixture {
+            tmp: tempfile::tempdir().unwrap(),
+            src_dir,
+            dests: vec![Dest {
+                dir: dest_dir,
+                id: row.id,
+            }],
+            db,
+            project_id: project.id,
+            caps: FsCapabilities::for_fs_type("apfs"),
+            cancel: Arc::new(AtomicBool::new(false)),
+            fault: RefCell::new(None),
+            chunk: 64 * 1024,
+            reserve: 0,
+        }
+    }
+
     // ------------------------------------------------------------- files
 
     pub fn write_src(&self, path: &str, content: &[u8]) {

@@ -801,6 +801,12 @@ impl Coordinator {
         let job = self.active_job.take();
         match s {
             ScanMsg::Done { result, generation } => {
+                tracing::info!(
+                    entries = result.entries.len(),
+                    complete = result.complete,
+                    generation,
+                    "source scan finished"
+                );
                 self.source_unavailable = None;
                 self.latest_gen = generation;
                 self.latest_scan = Some(result);
@@ -810,13 +816,17 @@ impl Coordinator {
                 }
             }
             ScanMsg::Unavailable(e) => {
+                tracing::warn!("source folder is unavailable");
                 // Not an empty folder: nothing is planned and nothing is concluded.
                 self.source_unavailable = Some(e);
                 self.latest_scan = None;
                 self.preview = None;
             }
             ScanMsg::Cancelled => {}
-            ScanMsg::Failed(e) => self.notice(NoticeLevel::Error, format!("Scan failed: {e}")),
+            ScanMsg::Failed(e) => {
+                tracing::warn!(error = %e, "source scan failed");
+                self.notice(NoticeLevel::Error, format!("Scan failed: {e}"))
+            }
         }
         self.try_start();
     }
@@ -901,6 +911,12 @@ impl Coordinator {
                 notes,
                 permission_denied,
             } => {
+                tracing::info!(
+                    drive = slot_of(i).as_str(),
+                    online = matches!(connectivity, Connectivity::Online { .. }),
+                    permission_denied,
+                    "drive connectivity changed"
+                );
                 let came_online = matches!(connectivity, Connectivity::Online { .. })
                     && !matches!(self.dests[i].connectivity, Connectivity::Online { .. });
                 {
@@ -939,8 +955,17 @@ impl Coordinator {
                 self.dests[i].attention = Arc::new(attention_of(&plan));
                 self.dests[i].last_plan = Some(plan);
                 self.dests[i].last_error = None;
-                if let Some(s) = summary {
-                    if let Some(why) = s.stopped_early {
+                if let Some(s) = &summary {
+                    tracing::info!(
+                        drive = slot_of(i).as_str(),
+                        copied = s.done,
+                        unchanged = s.unchanged,
+                        stale = s.stale,
+                        failed = s.failed,
+                        bytes = s.bytes,
+                        "batch finished"
+                    );
+                    if let Some(why) = s.stopped_early.clone() {
                         self.dests[i].last_error = Some(why.clone());
                         self.notice(
                             NoticeLevel::Error,
@@ -987,6 +1012,7 @@ impl Coordinator {
                 }
             }
             WorkerEvent::Failed(m) => {
+                tracing::warn!(drive = slot_of(i).as_str(), error = %m, "drive operation failed");
                 self.dests[i].last_error = Some(m.clone());
                 self.awaiting.remove(&i);
                 self.notice(
