@@ -93,3 +93,21 @@ impl AppPaths {
         self.data_dir.join("config.json")
     }
 }
+
+/// Hold this for the life of the process: a second TwinSync must not write the
+/// same project. The lock is released by the OS when the process exits.
+pub fn acquire_instance_lock(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
+    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(f)
+}

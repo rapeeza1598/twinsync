@@ -92,6 +92,8 @@ pub enum Command {
         slot: Slot,
         confirm_siblings: bool,
     },
+    /// Close the "also unmounts other volumes" prompt without ejecting.
+    CancelEject,
     Resolve {
         slot: Slot,
         rel: RelPath,
@@ -150,6 +152,8 @@ pub struct AttentionItem {
 #[derive(Clone, Debug)]
 pub struct DestView {
     pub slot: Slot,
+    /// Database id of the destination; lets the UI filter the activity log.
+    pub id: Option<String>,
     pub configured: bool,
     pub label: String,
     pub volume_name: Option<String>,
@@ -181,6 +185,7 @@ impl DestView {
     pub fn empty(slot: Slot) -> Self {
         Self {
             slot,
+            id: None,
             configured: false,
             label: slot.default_label(),
             volume_name: None,

@@ -3804,6 +3804,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "eframe",
+ "egui",
  "egui_extras",
  "globset",
  "libc",

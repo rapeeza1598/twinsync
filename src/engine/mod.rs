@@ -676,6 +676,7 @@ impl Coordinator {
                 slot,
                 confirm_siblings,
             } => self.eject(slot, confirm_siblings),
+            Command::CancelEject => self.eject_prompt = None,
             Command::Resolve {
                 slot,
                 rel,
@@ -1479,6 +1480,7 @@ impl Coordinator {
             let mut v = DestView::empty(slot);
             if let Some(r) = &d.row {
                 v.configured = true;
+                v.id = Some(r.id.clone());
                 v.label = r.label.clone();
                 v.volume_name = r.volume_name.clone();
                 v.media = r.media_type;
