@@ -286,3 +286,31 @@ impl Fixture {
         self.db.unfinished_ops(&self.dests[d].id).unwrap().len()
     }
 }
+
+// -------------------------------------------------------------- devices
+
+pub fn vol(
+    mount: &Path,
+    uuid: &str,
+    media: DriveMediaType,
+    physical: Option<&str>,
+) -> twinsync::devices::VolumeInfo {
+    use std::os::unix::fs::MetadataExt;
+    twinsync::devices::VolumeInfo {
+        mount_point: mount.to_path_buf(),
+        bsd_name: "disk9s1".into(),
+        volume_uuid: Some(uuid.to_string()),
+        volume_name: mount.file_name().unwrap().to_string_lossy().into_owned(),
+        fs_type: "exfat".into(),
+        media,
+        bus_protocol: Some("USB".into()),
+        internal: false,
+        writable: true,
+        ejectable: true,
+        local_disk: true,
+        physical_disk: physical.map(str::to_string),
+        media_name: None,
+        total_bytes: 1 << 40,
+        dev: fs::metadata(mount).map_or(0, |m| m.dev()),
+    }
+}
