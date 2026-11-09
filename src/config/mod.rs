@@ -111,3 +111,21 @@ pub fn acquire_instance_lock(path: &Path) -> std::io::Result<std::fs::File> {
     }
     Ok(f)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_second_instance_cannot_take_the_lock() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("nested/twinsync.lock");
+        let first = acquire_instance_lock(&p).unwrap();
+        assert!(acquire_instance_lock(&p).is_err());
+        drop(first);
+        assert!(
+            acquire_instance_lock(&p).is_ok(),
+            "released when the first instance ends"
+        );
+    }
+}
