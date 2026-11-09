@@ -632,29 +632,27 @@ impl Db {
     // ---------------------------------------------------- destination entries
 
     pub fn dest_entries(&self, dest_id: &str) -> Result<HashMap<RelPath, DestEntry>> {
-        let mut st = self.conn.prepare(
-            "SELECT rel_path, kind, status, synced_hash, dest_size, dest_mtime_ns, dest_inode,
-                    src_size, src_mtime_ns, src_inode, synced_at, verified_at
-             FROM destination_entries WHERE destination_id = ?1",
-        )?;
-        let rows = st.query_map([dest_id], |r| {
-            Ok(DestEntry {
-                rel: rel_from(r, 0)?,
-                kind: EntryKind::parse(&r.get::<_, String>(1)?).unwrap_or(EntryKind::File),
-                status: EntryStatus::parse(&r.get::<_, String>(2)?),
-                synced_hash: hash_from(r, 3)?,
-                dest_fp: fp_from(r, 4)?,
-                src_fp: fp_from(r, 7)?,
-                synced_at: r.get(10)?,
-                verified_at: r.get(11)?,
-            })
-        })?;
+        let mut st = self
+            .conn
+            .prepare(&format!("{DEST_ENTRY_SELECT} WHERE destination_id = ?1"))?;
+        let rows = st.query_map([dest_id], map_dest_entry)?;
         let mut out = HashMap::new();
         for e in rows {
             let e = e?;
             out.insert(e.rel.clone(), e);
         }
         Ok(out)
+    }
+
+    pub fn dest_entry(&self, dest_id: &str, rel: &RelPath) -> Result<Option<DestEntry>> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!("{DEST_ENTRY_SELECT} WHERE destination_id = ?1 AND rel_path = ?2"),
+                params![dest_id, rel.as_bytes()],
+                map_dest_entry,
+            )
+            .optional()?)
     }
 
     pub fn upsert_dest_entry(&self, dest_id: &str, e: &DestEntry) -> Result<()> {
@@ -912,6 +910,23 @@ impl Db {
         )?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
+}
+
+const DEST_ENTRY_SELECT: &str = "SELECT rel_path, kind, status, synced_hash, dest_size,
+    dest_mtime_ns, dest_inode, src_size, src_mtime_ns, src_inode, synced_at, verified_at
+    FROM destination_entries";
+
+fn map_dest_entry(r: &Row<'_>) -> rusqlite::Result<DestEntry> {
+    Ok(DestEntry {
+        rel: rel_from(r, 0)?,
+        kind: EntryKind::parse(&r.get::<_, String>(1)?).unwrap_or(EntryKind::File),
+        status: EntryStatus::parse(&r.get::<_, String>(2)?),
+        synced_hash: hash_from(r, 3)?,
+        dest_fp: fp_from(r, 4)?,
+        src_fp: fp_from(r, 7)?,
+        synced_at: r.get(10)?,
+        verified_at: r.get(11)?,
+    })
 }
 
 fn upsert_dest_entry(conn: &Connection, dest_id: &str, e: &DestEntry) -> Result<()> {
