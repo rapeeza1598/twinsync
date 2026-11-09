@@ -150,6 +150,64 @@ impl Fingerprint {
     }
 }
 
+/// What a destination filesystem can actually do. Detected from the mounted
+/// volume (never inferred from media type); tests construct it directly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FsCapabilities {
+    pub fs_type: String,
+    pub max_file_size: Option<u64>,
+    pub case_insensitive: bool,
+    /// Inode numbers are trusted across remounts (compared in fingerprints).
+    pub inode_stable: bool,
+    /// `renamex_np(RENAME_EXCL)` works, so a commit cannot clobber a racing file.
+    pub rename_excl: bool,
+    /// FAT/exFAT reject `" * : < > ? \ |` and control characters in names.
+    pub restricted_names: bool,
+    pub max_name_bytes: usize,
+}
+
+impl FsCapabilities {
+    /// Static defaults by `diskutil`/`statfs` type name; detection refines them.
+    pub fn for_fs_type(fs_type: &str) -> Self {
+        let t = fs_type.to_ascii_lowercase();
+        let fat = matches!(t.as_str(), "msdos" | "fat32" | "fat" | "exfat");
+        Self {
+            max_file_size: (t == "msdos" || t == "fat32" || t == "fat").then_some(u32::MAX as u64),
+            case_insensitive: true,
+            inode_stable: matches!(t.as_str(), "apfs" | "hfs"),
+            rename_excl: matches!(t.as_str(), "apfs" | "hfs"),
+            restricted_names: fat,
+            max_name_bytes: 255,
+            fs_type: t,
+        }
+    }
+
+    /// Why this file name cannot be written to the destination as-is, if it can't.
+    pub fn name_problem(&self, name: &[u8]) -> Option<String> {
+        if name.len() > self.max_name_bytes {
+            return Some(format!("name longer than {} bytes", self.max_name_bytes));
+        }
+        if self.restricted_names {
+            if let Some(&b) = name
+                .iter()
+                .find(|&&b| b < 0x20 || b"\"*:<>?\\|".contains(&b))
+            {
+                return Some(format!(
+                    "character {:?} is not allowed on {}",
+                    b as char, self.fs_type
+                ));
+            }
+            if name.last().is_some_and(|&b| b == b'.' || b == b' ') {
+                return Some(format!(
+                    "trailing dot or space is not allowed on {}",
+                    self.fs_type
+                ));
+            }
+        }
+        None
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EntryKind {
     File,

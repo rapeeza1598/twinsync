@@ -150,6 +150,9 @@ pub enum EntryStatus {
     Orphaned,
     /// User approved replacing the existing destination file (previous version is kept).
     ReplaceApproved,
+    /// Destination copy was modified outside TwinSync. `dest_fp` holds the modified
+    /// file's fingerprint so later plans do not need to hash it again.
+    Conflict,
 }
 
 impl EntryStatus {
@@ -159,6 +162,7 @@ impl EntryStatus {
             Self::Ignored => "ignored",
             Self::Orphaned => "orphaned",
             Self::ReplaceApproved => "replace_approved",
+            Self::Conflict => "conflict",
         }
     }
     pub fn parse(s: &str) -> Self {
@@ -166,6 +170,7 @@ impl EntryStatus {
             "ignored" => Self::Ignored,
             "orphaned" => Self::Orphaned,
             "replace_approved" => Self::ReplaceApproved,
+            "conflict" => Self::Conflict,
             _ => Self::Synced,
         }
     }
