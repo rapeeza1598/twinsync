@@ -8,7 +8,9 @@ compile_error!(
 pub mod config;
 pub mod devices;
 pub mod domain;
+pub mod engine;
 pub mod errors;
+pub mod monitor;
 pub mod planner;
 pub mod platform;
 pub mod scanner;

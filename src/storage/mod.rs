@@ -597,6 +597,21 @@ impl Db {
         })
     }
 
+    /// Forget a destination and everything TwinSync recorded about it (files on the drive are untouched).
+    pub fn delete_destination(&self, id: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        for t in ["destination_entries", "sync_operations", "file_versions"] {
+            tx.execute(&format!("DELETE FROM {t} WHERE destination_id = ?1"), [id])?;
+        }
+        tx.execute(
+            "UPDATE activity_events SET destination_id = NULL WHERE destination_id = ?1",
+            [id],
+        )?;
+        tx.execute("DELETE FROM destinations WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn set_planned_generation(&self, dest_id: &str, generation: i64) -> Result<()> {
         self.conn.execute(
             "UPDATE destinations SET planned_generation = ?2 WHERE id = ?1",
@@ -618,6 +633,23 @@ impl Db {
             "UPDATE destinations SET last_mount_path = ?2 WHERE id = ?1",
             params![dest_id, path_blob(mount)],
         )?;
+        Ok(())
+    }
+
+    /// Record that these paths were content-verified just now (one transaction).
+    pub fn mark_verified(&self, dest_id: &str, rels: &[RelPath]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut st = tx.prepare(
+                "UPDATE destination_entries SET verified_at = ?3
+                 WHERE destination_id = ?1 AND rel_path = ?2",
+            )?;
+            let now = now_secs();
+            for r in rels {
+                st.execute(params![dest_id, r.as_bytes(), now])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 

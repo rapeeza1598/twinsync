@@ -438,6 +438,13 @@ pub fn check_destination_choice(
         };
         findings.push(f(Severity::NeedsConfirm, msg));
     }
+    if vol.volume_uuid.is_none() {
+        findings.push(f(
+            Severity::NeedsConfirm,
+            "this volume reports no UUID, so TwinSync can only recognize it by a marker file plus its name and size; \
+             you will be asked to confirm it each time it is mounted",
+        ));
+    }
     if vol.internal {
         findings.push(f(
             Severity::Warning,

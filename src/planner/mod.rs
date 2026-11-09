@@ -482,3 +482,21 @@ fn apply_space_limit(items: &mut [PlannedItem], input: &PlanInput) {
         }
     }
 }
+
+/// Fingerprint of what a plan would do. Lets Sync Now notice that the plan the
+/// user reviewed is not the plan that would run now.
+pub fn plan_signature(plan: &Plan) -> u64 {
+    let mut h = blake3::Hasher::new();
+    for i in &plan.items {
+        h.update(i.rel.as_bytes());
+        h.update(&[0]);
+        h.update(i.action.label().as_bytes());
+        h.update(&i.size.to_le_bytes());
+        if let Some(fp) = &i.expected_src {
+            h.update(&fp.size.to_le_bytes());
+            h.update(&fp.mtime_ns.to_le_bytes());
+        }
+    }
+    let d = h.finalize();
+    u64::from_le_bytes(d.as_bytes()[..8].try_into().expect("8 bytes"))
+}
