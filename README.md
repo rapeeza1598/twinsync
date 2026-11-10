@@ -9,8 +9,10 @@ anything it replaces.
 
 > **Status: MVP.** Everything in this README is implemented and covered by automated tests unless it is
 > listed under [Known limitations](#known-limitations). It has been exercised on throwaway disk images
-> (APFS, HFS+, exFAT, FAT32) and with fakes for drive identity. **It has not been run against a real
-> external SSD or HDD**; use the [manual checklist](#manual-ssd--hdd-checklist) before trusting it with data you cannot replace.
+> (APFS, HFS+, exFAT, FAT32), with fakes for drive identity, and in **one real session with a USB SSD and a
+> USB HDD** (see [Real-hardware observations](#real-hardware-observations)). That session covered the happy
+> path only; the harder cases (unplugging mid-copy, a sleeping HDD, version history on real drives) are still
+> open in the [manual checklist](#manual-ssd--hdd-checklist). Use it before trusting TwinSync with data you cannot replace.
 
 ## Requirements
 
@@ -95,7 +97,7 @@ Items that need a decision appear under **Needs Attention**:
 | A file already exists where a new one should go (collision) | Adopt if identical · Replace with source (existing goes to version history) · Ignore |
 | Copy edited on the drive (conflict) | Replace with source · Ignore |
 | Copy deleted from the drive | Restore from source · Don't recreate |
-| File gone from the source | Keep copy, dismiss |
+| File or folder gone from the source | Keep copy, dismiss |
 
 "Ignore" stays quiet until the source file changes again.
 
@@ -143,18 +145,39 @@ sleeping disk.
 
 Do this with data you can afford to lose, and write down what you see.
 
-- [ ] Connect an SSD. Set it up as Drive A. Media shows **SSD** (or **Unknown** behind a bridge that does not say; that is fine).
-- [ ] Connect an HDD as Drive B. The card never guesses SSD/HDD from the name or size.
-- [ ] Preview, Sync, then confirm file counts and a few checksums match (`shasum -a 256`).
+- [x] Connect an SSD. Set it up as Drive A. Media shows **SSD** (or **Unknown** behind a bridge that does not say; that is fine). *Observed: SSD.*
+- [x] Connect an HDD as Drive B. The card never guesses SSD/HDD from the name or size. *Observed: HDD, reported by macOS.*
+- [ ] Preview, Sync, then confirm file counts and a few checksums match (`shasum -a 256`). *Counts and TwinSync's own hash check matched; not yet compared with `shasum`.*
 - [ ] Change a file; sync; check the old version is under `.twinsync/.../versions/`.
 - [ ] Unplug Drive B in the middle of a large copy (yank the cable). Reconnect. TwinSync should report
       the interruption, clean up its temp file, and finish on the next sync. Look in the Activity page.
 - [ ] Let the HDD spin down, then Sync. The card should show *Waiting for the drive to respond* rather than an error.
 - [ ] Prepare to Disconnect during a copy: the state goes to *Stopping…*, then the note appears. Check that
       the note does not say it is safe to unplug. Then Eject… and check Finder agrees.
+      *Observed once while idle: Prepare to Disconnect, then Eject in the app; both drives left `/Volumes`. Not yet during a copy.*
 - [ ] Plug both drives, then try one drive at a time.
 - [ ] Put a file in a destination folder by hand with the same name as a source file: expect a collision, not an overwrite.
-- [ ] Run **Full Verify** and compare its summary with your own checksums.
+- [x] Run **Full Verify**. *Observed: 0 mismatches on both drives. Not yet compared with your own checksums.*
+
+### Real-hardware observations
+
+One session, 2026-11-10, read back from `~/Library/Logs/TwinSync/twinsync.log` and the app's database
+(read-only). Treat it as a single data point, not a test campaign.
+
+- **Drives:** Drive A a USB SSD (`MD202`), Drive B a USB HDD, both exFAT. macOS reported `SolidState` for both, so the
+  cards showed SSD and HDD rather than Unknown.
+- **Source:** 57 files, 10.46 GB. Both drives hold the same 57 files; 114 transfers, **all committed, 0 failures**,
+  no warnings or errors in the log, no unfinished operations.
+- **Full Verify** (content hashes) on both drives: 0 mismatches, 0 missing.
+- **Speed:** the first 10.1 GB took about 93 s to the SSD and 104 s to the HDD (roughly 100 MB/s each; the timestamps
+  suggest the two drives were written in parallel). Observed, not a benchmark.
+- **App health:** after about 16 hours open, about 50-90 MB of memory and about 0.1% average CPU. Whether files are
+  held open on a connected drive while idle was **not** checked (the drives were already unplugged by then).
+- **What it taught us** (and what was changed afterwards): an empty folder TwinSync created and the user then renamed
+  stayed on both drives with no sign of it, so folders that leave the source are now reported like files; 15 of 41
+  syncs did nothing yet re-read both drives, so changes to excluded files such as `.DS_Store` are now ignored and an
+  event-triggered scan that finds the source unchanged no longer reads drives that were already up to date; and the
+  log could not say why a scan ran or that a drive had been ejected, so triggers and drive events are now recorded.
 
 ## Recovery procedures
 
@@ -176,7 +199,9 @@ is connected, before anything new is written.
 
 ## Privacy and permissions
 
-TwinSync is **not sandboxed**, runs locally, has no telemetry and sends nothing over the network.
+TwinSync is **not sandboxed**, runs locally, has no telemetry and sends nothing over the network. The log and the
+Activity page hold counts, labels, volume names and status only (drive connected or disconnected, Prepare to
+Disconnect, eject, setup, pause and resume, and why each scan ran), never file contents or folder paths.
 macOS may ask once for access to **Documents / Desktop / Downloads** (if your source is there) and to
 **removable volumes** (when it first touches a drive); the `Info.plist` usage strings explain why. It does not
 ask for Full Disk Access and does not need it. It does not use security-scoped bookmarks, so it makes no
@@ -232,7 +257,9 @@ async runtime (all drive I/O is blocking).
 - The GUI was verified by running it and capturing the window, plus engine-level tests of everything it
   triggers. Individual clicks and the native folder dialog are not automated.
 - Periodic re-checks and Auto Sync read the drive and may wake a sleeping HDD; with Auto Sync off only the source
-  is scanned.
+  is scanned. File-system events that change nothing in the source, or only touch excluded files, do not read the
+  drives; so a change made **on a drive** (say a file deleted there) is noticed by the periodic re-check, a mount or
+  wake event, or when you press Preview or Sync Now, not by source events alone.
 - ETA is not shown at all; transfer speed appears only after a couple of seconds of data.
 
 ## Future phases (not started, and not blocking the MVP)
