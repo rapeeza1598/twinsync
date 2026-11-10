@@ -16,6 +16,9 @@ pub enum FsSignal {
     Overflow,
 }
 
+/// Returns true for paths that must not cause work.
+pub type IgnoreFn = Arc<dyn Fn(&Path) -> bool + Send + Sync>;
+
 #[derive(Clone)]
 pub struct Callbacks {
     pub on_fs: Arc<dyn Fn(FsSignal) + Send + Sync>,
@@ -51,13 +54,18 @@ impl Monitor {
 
     /// Replace the watched folder. Errors are reported as an overflow so the
     /// engine falls back to periodic reconciliation instead of trusting silence.
-    pub fn watch_source(&mut self, path: Option<&Path>) {
+    ///
+    /// `ignore` says whether a path is one the user excluded (`.DS_Store`, `._*`, ...).
+    /// An event whose paths are all ignored is dropped, so Finder rewriting a
+    /// `.DS_Store` cannot trigger a scan and a read of both drives.
+    pub fn watch_source(&mut self, path: Option<&Path>, ignore: IgnoreFn) {
         self.watcher = None;
         let Some(path) = path else { return };
         let on_fs = self.cb.on_fs.clone();
         let handler = move |res: notify::Result<notify::Event>| match res {
             Ok(ev) if ev.need_rescan() => on_fs(FsSignal::Overflow),
             Ok(ev) if matches!(ev.kind, EventKind::Access(_)) => {}
+            Ok(ev) if !ev.paths.is_empty() && ev.paths.iter().all(|p| ignore(p)) => {}
             Ok(_) => on_fs(FsSignal::Changed),
             Err(_) => on_fs(FsSignal::Overflow),
         };

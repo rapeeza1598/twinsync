@@ -1191,3 +1191,194 @@ fn a_folder_removed_from_the_source_is_reported_kept_and_can_be_dismissed() {
         "each drive is dismissed separately"
     );
 }
+
+// ------------------------------------------------ quiet drives, and an audit trail
+
+fn sync_events(s: &UiSnapshot) -> usize {
+    s.activity
+        .iter()
+        .filter(|e| e.kind == "sync" && e.destination_id.is_some())
+        .count()
+}
+
+/// Monitor on, Auto Sync on, everything already synced.
+fn watching_harness() -> H {
+    let h = H::with(|c| c.start_monitor = true);
+    h.put("first.txt", b"1");
+    h.setup();
+    let mut settings = h.engine.snapshot().settings.clone();
+    settings.debounce_ms = 200;
+    h.engine.send(Command::SaveSettings(settings));
+    h.engine.send(Command::SetAutoSync(true));
+    h.wait("initial sync", |s| s.all_up_to_date);
+    // let the watcher settle after our own setup writes
+    std::thread::sleep(Duration::from_millis(1500));
+    h
+}
+
+#[test]
+fn changes_to_excluded_files_never_cause_a_scan_or_wake_the_drives() {
+    let h = watching_harness();
+    let (scans0, syncs0) = {
+        let s = h.engine.snapshot();
+        (s.scans_completed, sync_events(&s))
+    };
+    // what Finder and macOS do to a folder you merely look at
+    for i in 0..5 {
+        fs::write(h.src.join(".DS_Store"), format!("junk {i}")).unwrap();
+        fs::write(h.src.join("._sidecar"), b"x").unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    std::thread::sleep(Duration::from_secs(3)); // far beyond the 200 ms debounce
+    let s = h.engine.snapshot();
+    assert_eq!(
+        s.scans_completed, scans0,
+        "an excluded file must not trigger a scan"
+    );
+    assert_eq!(sync_events(&s), syncs0, "and must not read the drives");
+
+    // control: the watcher is alive, a real change still flows through
+    h.put("real.txt", b"data");
+    h.wait("real change synced", |s| {
+        s.scans_completed > scans0 && sync_events(s) > syncs0
+    });
+    h.wait("up to date", |s| s.all_up_to_date);
+    assert_eq!(read(h.dir(1).join("real.txt")).unwrap(), b"data");
+}
+
+#[test]
+fn an_unchanged_source_after_file_events_leaves_the_drives_alone_but_user_actions_do_not() {
+    let h = watching_harness();
+    let (scans0, syncs0) = {
+        let s = h.engine.snapshot();
+        (s.scans_completed, sync_events(&s))
+    };
+    // a real file-system event whose net effect on the source is nothing
+    fs::write(h.src.join("flash.txt"), b"here and gone").unwrap();
+    fs::remove_file(h.src.join("flash.txt")).unwrap();
+    h.wait("scan ran", |s| s.scans_completed > scans0);
+    std::thread::sleep(Duration::from_millis(800));
+    let s = h.engine.snapshot();
+    assert_eq!(
+        sync_events(&s),
+        syncs0,
+        "identical source: no read of either drive"
+    );
+    assert!(s.all_up_to_date, "and the claim stays truthful");
+
+    // the same situation, but the user asks: the drives are read
+    h.engine.send(Command::SyncNow {
+        preview_signature: None,
+    });
+    h.wait("drives read on request", |s| sync_events(s) > syncs0);
+}
+
+#[test]
+fn drive_lifecycle_and_controls_leave_an_audit_trail_without_paths() {
+    let h = H::new();
+    h.put("a.txt", b"x");
+    h.setup();
+    let has = |s: &UiSnapshot, kind: &str, needle: &str| {
+        s.activity
+            .iter()
+            .any(|e| e.kind == kind && e.detail.contains(needle))
+    };
+    let s = h.engine.snapshot();
+    assert!(has(&s, "setup", "source folder set"));
+    assert!(has(&s, "setup", "Drive A set up"), "{:#?}", s.activity);
+    assert!(has(&s, "drive", "connected: B (hdd, exfat)"));
+
+    // unplugged and back
+    let b_vol = h
+        .resolver
+        .mounted_volumes()
+        .unwrap()
+        .into_iter()
+        .find(|v| v.volume_uuid.as_deref() == Some("UB"))
+        .unwrap();
+    h.resolver.remove_mount(&h.base.join("B"));
+    h.engine.send(Command::RefreshMounts);
+    h.wait("disconnect recorded", |s| has(s, "drive", "disconnected"));
+    h.resolver.add(b_vol);
+    h.engine.send(Command::RefreshMounts);
+    h.wait("reconnect recorded", |s| {
+        s.activity
+            .iter()
+            .filter(|e| e.kind == "drive" && e.detail.starts_with("connected: B"))
+            .count()
+            >= 2
+    });
+
+    // controls
+    h.engine.send(Command::Pause);
+    h.engine.send(Command::Resume);
+    h.engine.send(Command::SetAutoSync(true));
+    h.wait("controls recorded", |s| {
+        has(s, "control", "paused")
+            && has(s, "control", "resumed")
+            && has(s, "control", "Auto Sync on")
+    });
+
+    // prepare + failed eject + real eject
+    h.engine.send(Command::PrepareDisconnect { slot: Slot::A });
+    h.wait("released recorded", |s| {
+        has(s, "disconnect", "closed its files")
+    });
+    assert!(
+        h.engine
+            .snapshot()
+            .activity
+            .iter()
+            .any(|e| e.kind == "disconnect" && e.detail.contains("requested"))
+    );
+    *h.ejector.fail_with.lock().unwrap() = Some("Volume is busy".into());
+    h.engine.send(Command::Eject {
+        slot: Slot::A,
+        confirm_siblings: false,
+    });
+    h.wait("failed eject recorded", |s| {
+        s.activity
+            .iter()
+            .any(|e| e.kind == "eject" && e.result == "failed" && e.detail.contains("busy"))
+    });
+    *h.ejector.fail_with.lock().unwrap() = None;
+    h.engine.send(Command::Eject {
+        slot: Slot::A,
+        confirm_siblings: false,
+    });
+    h.wait("eject recorded", |s| {
+        s.activity
+            .iter()
+            .any(|e| e.kind == "eject" && e.result == "ok")
+    });
+
+    // privacy: nothing recorded contains a folder path or the temp directory
+    let base = h.base.to_string_lossy().to_string();
+    let s = h.engine.snapshot();
+    assert!(
+        s.activity
+            .iter()
+            .all(|e| !e.detail.contains(&base) && !e.detail.contains("/Volumes")),
+        "{:#?}",
+        s.activity
+    );
+}
+
+#[test]
+fn rejected_setups_are_recorded_with_the_reason() {
+    let h = H::new();
+    h.engine.send(Command::SetSource(h.src.clone()));
+    h.wait("source", |s| s.source.path.is_some());
+    let inside = h.src.join("backup-here");
+    fs::create_dir(&inside).unwrap();
+    h.engine.send(Command::ConfigureDestination {
+        slot: Slot::A,
+        path: inside,
+        label: "A".into(),
+    });
+    h.wait("rejection recorded", |s| {
+        s.activity
+            .iter()
+            .any(|e| e.kind == "setup" && e.result == "rejected" && e.detail.contains("overlap"))
+    });
+}

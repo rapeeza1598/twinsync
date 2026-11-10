@@ -271,6 +271,9 @@ pub struct UiSnapshot {
     pub auto_sync: bool,
     pub paused: bool,
     pub scanning: bool,
+    /// Source scans completed since the app started. Diagnostic: shows whether a file-system
+    /// event really led to a scan.
+    pub scans_completed: u64,
     pub preview: Option<Arc<PreviewView>>,
     pub activity: Arc<Vec<ActivityEvent>>,
     pub notices: Vec<Notice>,
@@ -296,6 +299,7 @@ impl Default for UiSnapshot {
             auto_sync: false,
             paused: false,
             scanning: false,
+            scans_completed: 0,
             preview: None,
             activity: Arc::new(Vec::new()),
             notices: Vec::new(),

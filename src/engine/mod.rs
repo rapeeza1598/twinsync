@@ -112,6 +112,32 @@ enum Job {
     Sync(Option<u64>),
 }
 
+/// Why a job was requested. It decides whether the drives may be left alone after an
+/// unchanged scan, and it is written to the log so every scan can be explained later.
+/// Ordered by how much the requester cares about fresh drive state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Origin {
+    FsEvent,
+    Startup,
+    Timer,
+    Wake,
+    Mount,
+    User,
+}
+
+impl Origin {
+    fn label(self) -> &'static str {
+        match self {
+            Origin::FsEvent => "fs-event",
+            Origin::Startup => "startup",
+            Origin::Timer => "timer",
+            Origin::Wake => "wake",
+            Origin::Mount => "mount",
+            Origin::User => "user",
+        }
+    }
+}
+
 // ----------------------------------------------------------------- config
 
 #[derive(Clone)]
@@ -291,7 +317,15 @@ struct Coordinator {
     latest_gen: i64,
     source_unavailable: Option<String>,
     wanted: Option<Job>,
+    wanted_origin: Origin,
+    /// True only if every request merged into `wanted` came from file-system events.
+    wanted_fs_only: bool,
     active_job: Option<Job>,
+    active_origin: Origin,
+    active_fs_only: bool,
+    /// Origin of the most recent dispatch to the drives (for the batch log line).
+    dispatch_origin: Origin,
+    scans_completed: u64,
     awaiting: HashSet<usize>,
     build_preview: bool,
     preview_stale: bool,
@@ -401,7 +435,13 @@ impl Coordinator {
             latest_gen: 0,
             source_unavailable: None,
             wanted: None,
+            wanted_origin: Origin::Startup,
+            wanted_fs_only: false,
             active_job: None,
+            active_origin: Origin::Startup,
+            active_fs_only: false,
+            dispatch_origin: Origin::Startup,
+            scans_completed: 0,
             awaiting: HashSet::new(),
             build_preview: false,
             preview_stale: false,
@@ -427,7 +467,7 @@ impl Coordinator {
         }
         if c.project.source_path.is_some() {
             c.watch_source();
-            c.request(Job::ScanOnly);
+            c.request(Job::ScanOnly, Origin::Startup);
         }
         Ok(c)
     }
@@ -454,9 +494,35 @@ impl Coordinator {
 
     fn watch_source(&mut self) {
         let p = self.project.source_path.clone();
+        // Changes to excluded files (Finder's .DS_Store, ._*, ...) must not cause a scan.
+        let ignore: crate::monitor::IgnoreFn =
+            match (&p, Exclusions::new(&self.settings().exclusions)) {
+                (Some(root), Ok(ex)) => {
+                    let root = root.clone();
+                    Arc::new(move |abs: &Path| ex.matches_path(&root, abs))
+                }
+                _ => Arc::new(|_: &Path| false),
+            };
         if let Some(m) = &mut self.monitor {
-            m.watch_source(p.as_deref());
+            m.watch_source(p.as_deref(), ignore);
         }
+    }
+
+    /// One place for "something happened": an Activity row, a log line (counts, labels
+    /// and volume names only, never file names or folder paths) and a repaint.
+    fn record(&mut self, dest: Option<usize>, kind: &str, result: &str, detail: &str) {
+        let id = dest.and_then(|i| self.dests[i].row.as_ref().map(|r| r.id.clone()));
+        let _ = self
+            .db
+            .log_event(id.as_deref(), kind, None, result, detail, false);
+        tracing::info!(
+            drive = dest.map_or("-", |i| slot_of(i).as_str()),
+            kind,
+            result,
+            detail,
+            "event"
+        );
+        self.reload_activity();
     }
 
     fn settings(&self) -> &Settings {
@@ -522,13 +588,13 @@ impl Coordinator {
             {
                 self.dirty_first = None;
                 self.dirty_last = None;
-                self.request(self.automatic_job());
+                self.request(self.automatic_job(), Origin::FsEvent);
             }
         }
         if now >= self.next_reconcile {
             self.next_reconcile =
                 now + Duration::from_secs(self.settings().reconcile_minutes.max(1) * 60);
-            self.request(self.automatic_job());
+            self.request(self.automatic_job(), Origin::Timer);
         }
         // Stall display only changes with time, so keep republishing while busy.
         if self.dests.iter().any(|d| d.busy()) {
@@ -564,7 +630,7 @@ impl Coordinator {
             }
             Msg::Wake => {
                 self.refresh_mounts();
-                self.request(self.automatic_job());
+                self.request(self.automatic_job(), Origin::Wake);
             }
             Msg::SetupChecked {
                 slot,
@@ -587,13 +653,17 @@ impl Coordinator {
                 match result {
                     Ok(text) => {
                         let d = &mut self.dests[idx(slot)];
-                        d.disconnect_note = Some(text);
+                        d.disconnect_note = Some(text.clone());
                         d.connectivity = Connectivity::Offline;
                         d.volume = None;
                         d.held = false;
                         d.released = false;
+                        self.record(Some(idx(slot)), "eject", "ok", &text);
                     }
-                    Err(e) => self.notice(NoticeLevel::Error, e),
+                    Err(e) => {
+                        self.record(Some(idx(slot)), "eject", "failed", &e);
+                        self.notice(NoticeLevel::Error, e)
+                    }
                 }
             }
         }
@@ -628,24 +698,34 @@ impl Coordinator {
                     let _ = self.db.upsert_destination(r);
                 }
             }
-            Command::Preview => self.request(Job::Preview),
+            Command::Preview => self.request(Job::Preview, Origin::User),
             Command::SyncNow { preview_signature } => {
                 self.paused.store(false, Ordering::Relaxed);
-                self.request(Job::Sync(preview_signature));
+                self.request(Job::Sync(preview_signature), Origin::User);
             }
-            Command::Pause => self.paused.store(true, Ordering::Relaxed),
+            Command::Pause => {
+                self.paused.store(true, Ordering::Relaxed);
+                self.record(None, "control", "ok", "paused");
+            }
             Command::Resume => {
                 self.paused.store(false, Ordering::Relaxed);
-                self.request(Job::Sync(None));
+                self.record(None, "control", "ok", "resumed");
+                self.request(Job::Sync(None), Origin::User);
             }
-            Command::RetryFailed => self.request(Job::Sync(None)),
+            Command::RetryFailed => self.request(Job::Sync(None), Origin::User),
             Command::SetAutoSync(on) => {
                 self.project.settings.auto_sync = on;
                 let _ = self
                     .db
                     .save_settings(&self.project.id, &self.project.settings);
+                self.record(
+                    None,
+                    "control",
+                    "ok",
+                    if on { "Auto Sync on" } else { "Auto Sync off" },
+                );
                 if on {
-                    self.request(Job::Sync(None));
+                    self.request(Job::Sync(None), Origin::User);
                 }
             }
             Command::SaveSettings(s) => {
@@ -655,6 +735,8 @@ impl Coordinator {
                     .save_settings(&self.project.id, &self.project.settings);
                 self.next_reconcile = Instant::now()
                     + Duration::from_secs(self.settings().reconcile_minutes.max(1) * 60);
+                self.watch_source();
+                self.record(None, "control", "ok", "settings saved");
             }
             Command::FullVerify { slot } => {
                 let d = &mut self.dests[idx(slot)];
@@ -670,7 +752,7 @@ impl Coordinator {
                 d.held = false;
                 d.released = false;
                 d.disconnect_note = None;
-                self.request(Job::Refresh);
+                self.request(Job::Refresh, Origin::User);
             }
             Command::Eject {
                 slot,
@@ -731,7 +813,8 @@ impl Coordinator {
             d.attention = Arc::new(Vec::new());
         }
         self.watch_source();
-        self.request(Job::ScanOnly);
+        self.record(None, "setup", "ok", "source folder set");
+        self.request(Job::ScanOnly, Origin::User);
     }
 
     fn reload_project(&mut self) {
@@ -742,7 +825,7 @@ impl Coordinator {
 
     // ---------------------------------------------------------------- jobs
 
-    fn request(&mut self, j: Job) {
+    fn request(&mut self, j: Job, origin: Origin) {
         if self.shutting_down {
             return;
         }
@@ -750,7 +833,15 @@ impl Coordinator {
             Job::Sync(_) if self.paused.load(Ordering::Relaxed) => Job::Refresh,
             other => other,
         };
+        let first = self.wanted.is_none();
         self.wanted = Some(self.wanted.map_or(j, |w| w.max(j)));
+        let fs = origin == Origin::FsEvent;
+        self.wanted_fs_only = if first { fs } else { self.wanted_fs_only && fs };
+        self.wanted_origin = if first {
+            origin
+        } else {
+            self.wanted_origin.max(origin)
+        };
         self.try_start();
     }
 
@@ -765,6 +856,8 @@ impl Coordinator {
         };
         self.wanted = None;
         self.active_job = Some(job);
+        self.active_origin = self.wanted_origin;
+        self.active_fs_only = self.wanted_fs_only;
         self.scan_running = true;
         self.scan_cancel.store(false, Ordering::Relaxed);
         let (tx, cancel) = (self.tx.clone(), self.scan_cancel.clone());
@@ -805,14 +898,26 @@ impl Coordinator {
                     entries = result.entries.len(),
                     complete = result.complete,
                     generation,
+                    trigger = self.active_origin.label(),
                     "source scan finished"
                 );
                 self.source_unavailable = None;
+                self.scans_completed += 1;
+                let (prev_scan, prev_gen) = (self.latest_scan.take(), self.latest_gen);
                 self.latest_gen = generation;
-                self.latest_scan = Some(result);
+                self.latest_scan = Some(result.clone());
                 self.reload_project();
+                self.dispatch_origin = self.active_origin;
                 if let Some(job) = job {
-                    self.dispatch(job);
+                    if self.unchanged_since_last_plan(job, prev_scan.as_deref(), &result, prev_gen)
+                    {
+                        tracing::info!(
+                            trigger = self.active_origin.label(),
+                            "source unchanged; drives not touched"
+                        );
+                    } else {
+                        self.dispatch(job);
+                    }
                 }
             }
             ScanMsg::Unavailable(e) => {
@@ -829,6 +934,48 @@ impl Coordinator {
             }
         }
         self.try_start();
+    }
+
+    /// After a scan caused only by file-system events: if the source is identical to the
+    /// previous scan and every connected drive was already fully up to date at that
+    /// generation, there is nothing to find out, so the drives are left alone (a sleeping
+    /// HDD stays asleep). The plans' generation moves forward so "up to date" stays true.
+    ///
+    /// Anything the user asks for, the periodic timer, wake and mount changes never take
+    /// this shortcut: they are exactly how drive-side changes are noticed.
+    fn unchanged_since_last_plan(
+        &mut self,
+        job: Job,
+        prev: Option<&ScanResult>,
+        new: &ScanResult,
+        prev_gen: i64,
+    ) -> bool {
+        if !self.active_fs_only || !matches!(job, Job::Sync(None) | Job::ScanOnly) {
+            return false;
+        }
+        if !prev.is_some_and(|p| p.same_content_as(new)) {
+            return false;
+        }
+        let current = |d: &DestRt| {
+            d.last_plan.as_ref().is_some_and(|p| {
+                p.is_empty() && p.source_scan_complete && p.source_generation == prev_gen
+            })
+        };
+        if !(0..2)
+            .filter(|&i| self.eligible(i))
+            .all(|i| current(&self.dests[i]))
+        {
+            return false;
+        }
+        let generation = self.latest_gen;
+        for i in 0..2 {
+            if self.eligible(i)
+                && let Some(p) = &mut self.dests[i].last_plan
+            {
+                p.source_generation = generation;
+            }
+        }
+        true
     }
 
     fn eligible(&self, i: usize) -> bool {
@@ -933,13 +1080,36 @@ impl Coordinator {
                 for n in notes {
                     self.notice(NoticeLevel::Warning, n);
                 }
+                let (result, detail) = match &self.dests[i].connectivity {
+                    Connectivity::Online { .. } => {
+                        let r = self.dests[i].row.as_ref();
+                        (
+                            "ok",
+                            format!(
+                                "connected: {} ({}, {})",
+                                r.and_then(|r| r.volume_name.clone()).unwrap_or_default(),
+                                r.map_or("unknown", |r| r.media_type.as_str()),
+                                r.and_then(|r| r.fs_type.clone()).unwrap_or_default(),
+                            ),
+                        )
+                    }
+                    Connectivity::Offline => ("ok", "disconnected".to_string()),
+                    Connectivity::IdentityMismatch(m) => {
+                        ("attention", format!("not the expected drive: {m}"))
+                    }
+                    Connectivity::NeedsConfirmation(m) => {
+                        ("attention", format!("confirmation needed: {m}"))
+                    }
+                };
+                self.record(Some(i), "drive", result, &detail);
                 self.refresh_versions(i);
                 if came_online {
-                    self.request(if self.settings().auto_sync {
+                    let job = if self.settings().auto_sync {
                         Job::Sync(None)
                     } else {
                         Job::Refresh
-                    });
+                    };
+                    self.request(job, Origin::Mount);
                 }
             }
             WorkerEvent::PlanReady {
@@ -963,6 +1133,7 @@ impl Coordinator {
                         stale = s.stale,
                         failed = s.failed,
                         bytes = s.bytes,
+                        trigger = self.dispatch_origin.label(),
                         "batch finished"
                     );
                     if let Some(why) = s.stopped_early.clone() {
@@ -1000,7 +1171,7 @@ impl Coordinator {
                     Ok(m) => self.notice(NoticeLevel::Info, m),
                     Err(m) => self.notice(NoticeLevel::Warning, m),
                 }
-                self.request(Job::Refresh);
+                self.request(Job::Refresh, Origin::User);
             }
             WorkerEvent::VerifyDone(msg, ok) => {
                 self.dests[i].verify_summary = Some(msg);
@@ -1023,12 +1194,21 @@ impl Coordinator {
             WorkerEvent::Stopped => {
                 let d = &mut self.dests[i];
                 d.cancel.store(false, Ordering::Relaxed);
+                let newly_released = d.held && !d.released;
                 if d.held {
                     d.released = true;
                     d.disconnect_note = Some(
                         "TwinSync has stopped using this drive and closed its files. This is not the same \
                          as ejecting: eject it in Finder, or use Eject here, before unplugging."
                             .into(),
+                    );
+                }
+                if newly_released {
+                    self.record(
+                        Some(i),
+                        "disconnect",
+                        "ok",
+                        "TwinSync stopped using this drive and closed its files (this is not an eject)",
                     );
                 }
             }
@@ -1104,6 +1284,7 @@ impl Coordinator {
                         d.held = false;
                         d.outstanding += 1;
                         let _ = d.tx.send(WorkerCmd::Disconnect);
+                        self.record(Some(i), "drive", "ok", "disconnected (no longer mounted)");
                     }
                 }
                 Presence::Candidate(v) => {
@@ -1125,11 +1306,29 @@ impl Coordinator {
                     });
                 }
                 Presence::Ambiguous(m) => {
-                    self.dests[i].connectivity = Connectivity::IdentityMismatch(m);
+                    let now = Connectivity::IdentityMismatch(m.clone());
+                    if self.dests[i].connectivity != now {
+                        self.record(
+                            Some(i),
+                            "drive",
+                            "attention",
+                            &format!("not the expected drive: {m}"),
+                        );
+                    }
+                    self.dests[i].connectivity = now;
                     self.dests[i].volume = None;
                 }
                 Presence::NoIdentity(m) => {
-                    self.dests[i].connectivity = Connectivity::NeedsConfirmation(m);
+                    let now = Connectivity::NeedsConfirmation(m.clone());
+                    if self.dests[i].connectivity != now {
+                        self.record(
+                            Some(i),
+                            "drive",
+                            "attention",
+                            &format!("confirmation needed: {m}"),
+                        );
+                    }
+                    self.dests[i].connectivity = now;
                 }
             }
         }
@@ -1179,10 +1378,22 @@ impl Coordinator {
 
     fn on_setup_checked(&mut self, slot: Slot, label: String, result: Result<DestCheck>) {
         match result {
-            Err(e) => self.notice(NoticeLevel::Error, format!("Cannot use that folder: {e}")),
+            Err(e) => {
+                self.record(None, "setup", "rejected", &e.to_string());
+                self.notice(NoticeLevel::Error, format!("Cannot use that folder: {e}"))
+            }
             Ok(check) => {
                 let blocked = check.has_error();
                 let confirm = check.needs_confirmation();
+                if blocked {
+                    let why: Vec<String> = check
+                        .findings
+                        .iter()
+                        .filter(|f| f.severity == crate::devices::Severity::Error)
+                        .map(|f| f.message.clone())
+                        .collect();
+                    self.record(None, "setup", "rejected", &why.join("; "));
+                }
                 if blocked || confirm {
                     self.setup_report = Some(SetupReport {
                         slot,
@@ -1225,6 +1436,13 @@ impl Coordinator {
         if let Err(e) = self.db.upsert_destination(&row) {
             return self.notice(NoticeLevel::Error, e.to_string());
         }
+        let detail = format!(
+            "{} set up: {} ({}, {})",
+            row.label,
+            row.volume_name.clone().unwrap_or_default(),
+            row.media_type.as_str(),
+            row.fs_type.clone().unwrap_or_default()
+        );
         let d = &mut self.dests[i];
         d.row = Some(row.clone());
         d.volume = Some(check.volume.clone());
@@ -1245,6 +1463,7 @@ impl Coordinator {
             self.shared_gate.store(true, Ordering::Relaxed);
         }
         self.preview = None;
+        self.record(Some(i), "setup", "ok", &detail);
     }
 
     fn confirm_identity(&mut self, slot: Slot) {
@@ -1337,6 +1556,12 @@ impl Coordinator {
         // The worker answers `Stopped` once it has genuinely stopped: right away
         // if idle, otherwise after the current chunk. Until then the UI says Stopping.
         let _ = d.tx.send(WorkerCmd::Release);
+        self.record(
+            Some(idx(slot)),
+            "disconnect",
+            "ok",
+            "Prepare to Disconnect requested",
+        );
     }
 
     fn eject(&mut self, slot: Slot, confirm: bool) {
@@ -1453,7 +1678,7 @@ impl Coordinator {
                     false,
                 );
                 self.reload_activity();
-                self.request(Job::Refresh);
+                self.request(Job::Refresh, Origin::User);
             }
             Err(e) => self.notice(NoticeLevel::Error, e.to_string()),
         }
@@ -1596,6 +1821,7 @@ impl Coordinator {
             auto_sync: self.project.settings.auto_sync,
             paused,
             scanning: self.scan_running,
+            scans_completed: self.scans_completed,
             preview: self.preview.clone(),
             activity: self.activity.clone(),
             notices: self.notices.clone(),

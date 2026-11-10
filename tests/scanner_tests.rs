@@ -199,3 +199,42 @@ fn cancellation_stops_the_scan() {
         Err(twinsync::errors::Error::Cancelled)
     ));
 }
+
+#[test]
+fn exclusion_matching_works_on_event_paths_below_the_source() {
+    let root = std::path::Path::new("/Users/me/work");
+    let ex = Exclusions::new(&default_exclusions()).unwrap();
+    let hit = |p: &str| ex.matches_path(root, std::path::Path::new(p));
+    assert!(hit("/Users/me/work/.DS_Store"));
+    assert!(hit("/Users/me/work/photos/.DS_Store"));
+    assert!(hit("/Users/me/work/a/._resource"));
+    assert!(
+        hit("/Users/me/work/.Spotlight-V100/Store-V2/x"),
+        "anything below an excluded folder"
+    );
+    assert!(hit("/Users/me/work/doc/~$lock.docx"));
+    // real work and build folders are not excluded unless the user adds them
+    assert!(!hit("/Users/me/work/photos/a.jpg"));
+    assert!(!hit("/Users/me/work/node_modules/pkg/index.js"));
+    // outside the source, and the source folder itself, are never "excluded"
+    assert!(!hit("/Users/me/other/.DS_Store"));
+    assert!(!hit("/Users/me/work"));
+}
+
+#[test]
+fn scans_with_the_same_content_compare_equal_even_if_excluded_counts_differ() {
+    let d = tempdir().unwrap();
+    fs::write(d.path().join("a.txt"), "x").unwrap();
+    let first = done(run(d.path(), false));
+    fs::write(d.path().join(".DS_Store"), "junk").unwrap(); // excluded: not content
+    let second = done(run(d.path(), false));
+    assert_ne!(first.excluded_count, second.excluded_count);
+    assert!(first.same_content_as(&second));
+    fs::write(d.path().join("b.txt"), "y").unwrap();
+    assert!(!first.same_content_as(&done(run(d.path(), false))));
+    fs::write(d.path().join("a.txt"), "changed").unwrap();
+    assert!(
+        !second.same_content_as(&done(run(d.path(), false))),
+        "a changed file is a change"
+    );
+}

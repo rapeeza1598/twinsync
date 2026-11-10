@@ -51,6 +51,16 @@ pub struct ScanResult {
 }
 
 impl ScanResult {
+    /// True when nothing TwinSync would act on differs: same entries (size, mtime,
+    /// inode, hash), same unreadable and skipped paths. The count of excluded files is
+    /// deliberately ignored: a new `.DS_Store` is not a change.
+    pub fn same_content_as(&self, other: &ScanResult) -> bool {
+        self.complete == other.complete
+            && self.entries == other.entries
+            && self.unreadable == other.unreadable
+            && self.skipped == other.skipped
+    }
+
     pub fn covers(&self, rel: &RelPath) -> bool {
         self.complete || !self.unreadable.iter().any(|u| rel.starts_with(u))
     }
@@ -71,6 +81,22 @@ impl Exclusions {
             b.add(Glob::new(p).map_err(|e| Error::Config(format!("bad exclusion {p:?}: {e}")))?);
         }
         Ok(Self(b.build().map_err(|e| Error::Config(e.to_string()))?))
+    }
+
+    /// Whether a path below `root` is excluded, or lies inside an excluded folder.
+    /// Used on file-system events so changes to ignored files never wake the drives.
+    pub fn matches_path(&self, root: &Path, abs: &Path) -> bool {
+        let Ok(rel) = abs.strip_prefix(root) else {
+            return false;
+        };
+        let mut prefix = std::path::PathBuf::new();
+        for comp in rel.components() {
+            prefix.push(comp);
+            if self.0.is_match(comp.as_os_str()) || self.0.is_match(&prefix) {
+                return true;
+            }
+        }
+        false
     }
 
     fn is_excluded(&self, name: &OsStr, rel: &RelPath) -> bool {
