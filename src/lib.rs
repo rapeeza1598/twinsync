@@ -5,6 +5,7 @@ compile_error!(
     "TwinSync targets macOS: the transfer layer uses renameatx_np, F_FULLFSYNC and diskutil"
 );
 
+pub mod about;
 pub mod app;
 pub mod config;
 pub mod devices;

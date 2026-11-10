@@ -43,7 +43,7 @@ fn main() -> eframe::Result {
             .with_min_inner_size([780.0, 540.0]),
         ..Default::default()
     };
-    let log_dir = paths.log_dir.clone();
+    let ui_paths = paths.clone();
     eframe::run_native(
         APP_NAME,
         options,
@@ -54,7 +54,7 @@ fn main() -> eframe::Result {
             let ctx = cc.egui_ctx.clone();
             cfg.on_change = Arc::new(move || ctx.request_repaint());
             let engine = Engine::start(cfg)?;
-            Ok(Box::new(TwinSyncApp::new(engine, log_dir)))
+            Ok(Box::new(TwinSyncApp::new(engine, &ui_paths)))
         }),
     )
 }

@@ -10,6 +10,17 @@ pub const TAGLINE: &str = crate::config::TAGLINE;
 pub const NAV_OVERVIEW: &str = "Overview";
 pub const NAV_ACTIVITY: &str = "Activity";
 pub const NAV_SETTINGS: &str = "Settings";
+pub const NAV_ABOUT: &str = "About";
+pub const ABOUT_SUMMARY: &str = "Copies a folder on this Mac, one way, to two external drives. Update Copy only: \
+     nothing is ever mirrored back, and nothing is deleted.";
+pub const ABOUT_PROMISES: [&str; 4] = [
+    "Never changes or deletes anything in your source folder.",
+    "Never deletes anything on a drive and never overwrites a file it did not copy.",
+    "Keeps the previous version of anything it replaces, on the same drive.",
+    "Copies are read back and compared before they replace anything.",
+];
+pub const ABOUT_LIMITS: &str = "It copies file contents, modification time and permission bits only. It is not a \
+     full-fidelity macOS backup; see the README for the limits.";
 
 pub const ALL_UP_TO_DATE: &str = "All up to date";
 pub const NOT_CHECKED: &str = "Not checked yet";

@@ -1,6 +1,7 @@
 //! egui front end. Talks to the engine only through `Command` and `UiSnapshot`;
 //! it never touches SQLite, the file system or macOS APIs, and never blocks on I/O.
 
+mod about;
 mod activity;
 mod overview;
 mod settings;
@@ -27,10 +28,12 @@ pub struct UiState {
     pub only_failures: bool,
     pub activity_slot: Option<Slot>,
     pub log_dir: PathBuf,
+    pub data_dir: PathBuf,
+    pub show_about: bool,
 }
 
 impl UiState {
-    pub fn new(log_dir: PathBuf) -> Self {
+    pub fn new(log_dir: PathBuf, data_dir: PathBuf) -> Self {
         Self {
             page: Page::Overview,
             show_preview: false,
@@ -39,6 +42,8 @@ impl UiState {
             only_failures: false,
             activity_slot: None,
             log_dir,
+            data_dir,
+            show_about: false,
         }
     }
 }
@@ -82,6 +87,16 @@ pub fn show(ui: &mut egui::Ui, cx: &mut Cx) {
                     }
                 }
             }
+            // Pinned to the bottom of the sidebar.
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                ui.add_space(8.0);
+                if ui
+                    .selectable_label(cx.state.show_about, strings::NAV_ABOUT)
+                    .clicked()
+                {
+                    cx.state.show_about = !cx.state.show_about;
+                }
+            });
         });
     egui::CentralPanel::default_margins().show(ui, |ui| match cx.state.page {
         Page::Overview => overview::show(ui, cx),
@@ -89,4 +104,5 @@ pub fn show(ui: &mut egui::Ui, cx: &mut Cx) {
         Page::Settings => settings::show(ui, cx),
     });
     overview::dialogs(ui.ctx(), cx);
+    about::window(ui.ctx(), cx);
 }

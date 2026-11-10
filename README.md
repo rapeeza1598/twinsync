@@ -2,6 +2,8 @@
 
 **One Mac. Two drives. Files in sync.**
 
+[![CI](https://github.com/rapeeza1598/twinsync/actions/workflows/ci.yml/badge.svg)](https://github.com/rapeeza1598/twinsync/actions/workflows/ci.yml)
+
 TwinSync is a macOS app, written in Rust, that watches a folder on your Mac and copies it one way to
 **two external drives**. It is built around not losing data: it never changes your source folder, never
 deletes anything on a drive, never overwrites a file it did not put there, and keeps the previous version of
@@ -33,6 +35,16 @@ cargo run                                # runs against ~/Library/Application Su
 TWINSYNC_DATA_DIR=/tmp/twinsync-dev cargo run   # throwaway state, for trying things out
 scripts/fs-compat-test.sh                # real filesystems on disk images (see below)
 ```
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main` and on pull requests (docs-only changes are skipped): `cargo fmt --check`,
+`clippy -D warnings`, `cargo test` and a release build, all on a **macOS** runner because TwinSync only builds on macOS.
+The real-filesystem tests are ignored there; run `scripts/fs-compat-test.sh` yourself. A manual run (**Actions → CI → Run workflow**)
+or a `v*` tag also builds `TwinSync.app` and attaches it to the run as an artifact (ad-hoc signed, not notarized).
+
+On a private repository macOS minutes count 10x against the free allowance, so the workflow cancels superseded runs and
+skips documentation-only pushes.
 
 State lives in `~/Library/Application Support/TwinSync/` (SQLite database and a lock file that prevents two
 copies of the app writing the same project). Logs are in `~/Library/Logs/TwinSync/twinsync.log` and contain
@@ -68,6 +80,9 @@ The script builds `--release`, assembles the bundle, lints `Info.plist` and sign
 4. Optionally enable **Auto Sync** (Settings controls the debounce and the periodic re-check).
 
 You can use one drive at a time. A drive that is not connected shows its last known state; the other keeps working.
+
+The **About** button at the bottom of the sidebar shows the version and the exact git commit of the running build,
+where your data and logs are, and what TwinSync promises and does not promise.
 
 ## Update Copy, and how it differs from Mirror
 
@@ -115,7 +130,8 @@ volume has left the mount table. The app never says "safe to unplug" before that
 step of the transfer (`transfer::FaultPoint`) and fakes for drive discovery (`devices::FakeResolver`,
 `FakeEjector`). Highlights: crash at every point of the pipeline then recover, disconnect mid-copy, full disk,
 source or destination changing mid-copy, symlink escape, stale previews, wrong drive in the right place,
-a slow drive not blocking the coordinator, pause, eject failures, legacy import.
+a slow drive not blocking the coordinator, pause, eject failures, legacy import. A headless render of every page and of
+the About window checks that the important text really appears; it cannot judge layout or looks.
 
 ### Filesystem compatibility (real filesystems, disk images)
 

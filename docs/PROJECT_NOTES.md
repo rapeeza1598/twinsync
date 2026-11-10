@@ -5,7 +5,7 @@ missing, and what changed when. **Update this file in the same commit as any cha
 [Keeping this current](#keeping-this-current)). The README describes the product for users; this file is for whoever
 works on it next.
 
-Last updated: 2026-11-10 (after commit `30e7bdf`).
+Last updated: 2026-11-10 (About window and GitHub Actions CI added).
 
 ## 1. Status at a glance
 
@@ -14,7 +14,8 @@ Last updated: 2026-11-10 (after commit `30e7bdf`).
 | What it is | macOS app in Rust (egui). One-way "Update Copy" from a Mac folder to two external drives. |
 | Repo | https://github.com/rapeeza1598/twinsync (**private**), branch `main`, pushed after every commit |
 | Size | about 9k lines in `src/`, about 4.3k in `tests/` |
-| Tests | **148 pass, 0 fail, 2 ignored** (the 2 are the real-filesystem tests, run by `scripts/fs-compat-test.sh`) |
+| Tests | **153 pass, 0 fail, 2 ignored** (the 2 are the real-filesystem tests, run by `scripts/fs-compat-test.sh`) |
+| CI | `.github/workflows/ci.yml` on a macOS runner: fmt, clippy, tests, release build; `bundle` job (app zip artifact) on manual run or `v*` tag. First run: see section 5 |
 | Gates | `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`, `cargo build --release` all green |
 | Real hardware | One session (USB SSD + USB HDD, exFAT): clean. Harder cases still untested, see [section 6](#6-not-yet-tested-on-real-hardware) |
 | Packaging | `scripts/bundle-macos.sh` builds an ad-hoc signed `TwinSync.app`; bundle id is a placeholder; not notarized; no icon |
@@ -58,6 +59,9 @@ Where things live on the user's Mac:
 | "Prepare to Disconnect" is not "safe to unplug"; Eject succeeds only if `diskutil` exits 0 **and** the volume left the mount table | Spec requirement; tested with a lying fake ejector. |
 | `UiSnapshot` is an `Arc` swapped by the coordinator; big lists are `Arc`'d inside | The UI clones a pointer per frame; a 100k-row preview must not be deep-copied. |
 | Legacy "SSD A / SSD B" import expects `{"source","ssd_a","ssd_b"}` (**assumed format**, user confirmed no real file exists) | Imported drives have no UUID, so they need confirmation before any write. Original file is renamed `.migrated`, never deleted. |
+| About is a sidebar button that opens a window, not a fourth page; build info comes from `src/about.rs` and `build.rs` embeds the short git commit | The spec fixes the sidebar at Overview/Activity/Settings. The commit makes "which build is this?" answerable (it came up when the running app was an old binary). Falls back to `unknown` outside a git checkout. |
+| CI runs only on macOS and is frugal (skips docs-only pushes, cancels superseded runs, bundle job only on request or tag) | The crate refuses to compile elsewhere, and private-repo macOS minutes are billed at 10x. |
+| The UI is smoke-tested headlessly with `egui::Context::run_ui` and the output text is checked | The GUI previously had only a screenshot check. Texture deltas must be cleared (`out.textures_delta.clear()`) because there is no renderer. |
 | Event-triggered scans identical to the previous one do not read drives that were already up to date | Added after the first real run (see section 5). User actions, the timer, wake and mount changes always read the drives. |
 
 ## 4. Where the implementation differs from, or falls short of, the original spec
@@ -83,6 +87,8 @@ Gaps against the spec (not implemented or only partly):
 - Activity "Retry" re-runs the whole sync, not a single item.
 - Pause is enabled even when nothing is configured (cosmetic, seen in the first screenshot).
 - No app icon, no notarization, no menu bar, no launch at login (the last two are "future phases" in the spec).
+- The About window and the other pages are verified by the headless text test only; nobody has looked at the About window on screen yet (the sidebar button cannot be clicked from automation).
+- CI has no job for `scripts/fs-compat-test.sh` (it needs disk images and `hdiutil` attach, which a hosted runner may not permit).
 
 ## 5. Findings log (what testing and real use taught us)
 
@@ -95,6 +101,7 @@ Found by automated tests while building:
   `domain`/`migration` tests instead.
 - On exFAT and FAT32, macOS keeps extended attributes in `._name` AppleDouble sidecars and moves them with renamed
   files. They show up inside version history. They are macOS's files, not TwinSync's; the compat test ignores them.
+- A headless egui test panics with "Dropped TexturesDelta" unless `FullOutput::textures_delta` is cleared.
 - macOS temp dirs are `/var/folders` symlinked to `/private/var`; `canonicalize` returns the real path, so test
   fixtures must use canonical paths.
 - Disk images report `BusProtocol = "Disk Image"` and no `SolidState` (so media `Unknown`).
@@ -145,7 +152,7 @@ TWINSYNC_DATA_DIR=/tmp/twinsync-dev cargo run
 - Tests that depend on real FSEvents (`auto_sync_*`, `changes_to_excluded_*`, `an_unchanged_*`) were run four times in a
   row without flakes. A fake-event hook would make them deterministic if they ever flake.
 - Mutation checks used on safety guards: temporarily break the guard, confirm a test fails, restore, `cmp` with the backup.
-- macOS `sed -i` differs from GNU; multi-line edits were done with small Python scripts.
+- macOS `sed -i` differs from GNU; multi-line edits were done with small Python scripts. PyYAML is not installed; validate workflow YAML with `ruby -ryaml -e 'YAML.load_file(".github/workflows/ci.yml")'`.
 
 Architecture overview and the per-folder map are in the README (section "Architecture"); not repeated here.
 
@@ -153,7 +160,8 @@ Architecture overview and the per-folder map are in the README (section "Archite
 
 | Date | Commit | Change |
 |---|---|---|
-| 2026-11-10 | (this commit) | Add this notes file, repo `CLAUDE.md` with the "always update the notes" rule. |
+| 2026-11-10 | (this commit) | About window (sidebar button; version, git commit, data/log folders, promises), `build.rs`, headless UI render tests, GitHub Actions CI workflow, README CI section and badge. |
+| 2026-11-10 | `5f7cc4d` | Add this notes file, repo `CLAUDE.md` with the "always update the notes" rule. |
 | 2026-11-10 | `30e7bdf` | README: record the first real-hardware session; tick only observed checklist items; document that source events no longer read up-to-date drives. |
 | 2026-11-10 | `1b5f874` | Ignore watcher events for excluded files; skip drive reads after an identical event-triggered scan; record drive/eject/setup/control events and the trigger of each scan. Added `scans_completed` to the snapshot. |
 | 2026-11-10 | `69e325a` | Report managed folders that left the source (`SourceDeleted` for dirs). |

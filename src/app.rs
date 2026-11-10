@@ -1,9 +1,8 @@
 //! The eframe application: owns the engine handle, forwards snapshots to the UI.
 
-use crate::config::Theme;
+use crate::config::{AppPaths, Theme};
 use crate::engine::{Engine, UiSnapshot};
 use crate::ui::{Cx, UiState};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -15,12 +14,12 @@ pub struct TwinSyncApp {
 }
 
 impl TwinSyncApp {
-    pub fn new(engine: Engine, log_dir: PathBuf) -> Self {
+    pub fn new(engine: Engine, paths: &AppPaths) -> Self {
         let snap = engine.snapshot();
         Self {
             engine,
             snap,
-            state: UiState::new(log_dir),
+            state: UiState::new(paths.log_dir.clone(), paths.data_dir.clone()),
             applied_theme: None,
         }
     }

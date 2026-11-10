@@ -1,0 +1,66 @@
+name: CI
+
+# TwinSync only builds on macOS (it uses renameatx_np, F_FULLFSYNC and diskutil), so every job runs on a
+# macOS runner. On private repositories macOS minutes are billed at 10x, so this workflow is deliberately
+# frugal: docs-only changes are skipped, a newer push cancels the run before it, and the app bundle is built
+# only on request or for a version tag.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore: ["**/*.md", "docs/**"]
+  pull_request:
+    paths-ignore: ["**/*.md", "docs/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: fmt, clippy, tests, release build
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Tests
+        # The two real-filesystem tests are ignored here; scripts/fs-compat-test.sh runs them on disk images.
+        run: cargo test --all-features
+      - name: Release build
+        run: cargo build --release
+
+  bundle:
+    name: TwinSync.app (ad-hoc signed, not notarized)
+    needs: check
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the app bundle
+        run: scripts/bundle-macos.sh
+      - name: Zip it, keeping macOS metadata and the signature intact
+        run: ditto -c -k --keepParent target/bundle/TwinSync.app TwinSync-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TwinSync-macos
+          path: TwinSync-macos.zip
+          if-no-files-found: error
