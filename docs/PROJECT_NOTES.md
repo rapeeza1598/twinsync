@@ -5,7 +5,7 @@ missing, and what changed when. **Update this file in the same commit as any cha
 [Keeping this current](#keeping-this-current)). The README describes the product for users; this file is for whoever
 works on it next.
 
-Last updated: 2026-11-10 (About window and GitHub Actions CI added).
+Last updated: 2026-11-10 (About window and CI workflow added; CI blocked at the account level).
 
 ## 1. Status at a glance
 
@@ -15,7 +15,7 @@ Last updated: 2026-11-10 (About window and GitHub Actions CI added).
 | Repo | https://github.com/rapeeza1598/twinsync (**private**), branch `main`, pushed after every commit |
 | Size | about 9k lines in `src/`, about 4.3k in `tests/` |
 | Tests | **153 pass, 0 fail, 2 ignored** (the 2 are the real-filesystem tests, run by `scripts/fs-compat-test.sh`) |
-| CI | `.github/workflows/ci.yml` on a macOS runner: fmt, clippy, tests, release build; `bundle` job (app zip artifact) on manual run or `v*` tag. First run: see section 5 |
+| CI | `.github/workflows/ci.yml` on a macOS runner: fmt, clippy, tests, release build; `bundle` job (app zip artifact) on manual run or `v*` tag. **Not running: every run ends `startup_failure`**, see section 5 |
 | Gates | `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`, `cargo build --release` all green |
 | Real hardware | One session (USB SSD + USB HDD, exFAT): clean. Harder cases still untested, see [section 6](#6-not-yet-tested-on-real-hardware) |
 | Packaging | `scripts/bundle-macos.sh` builds an ad-hoc signed `TwinSync.app`; bundle id is a placeholder; not notarized; no icon |
@@ -87,6 +87,7 @@ Gaps against the spec (not implemented or only partly):
 - Activity "Retry" re-runs the whole sync, not a single item.
 - Pause is enabled even when nothing is configured (cosmetic, seen in the first screenshot).
 - No app icon, no notarization, no menu bar, no launch at login (the last two are "future phases" in the spec).
+- **GitHub Actions does not run at all** (see section 5). The workflow is written and its YAML is valid, but no CI has ever executed, so it is untested: the `bundle` job, the `rust-cache` and `dtolnay/rust-toolchain` steps, and whether the FSEvents tests and `live_read_only_query_of_the_boot_volume_works` pass on a hosted macOS VM are all unknown.
 - The About window and the other pages are verified by the headless text test only; nobody has looked at the About window on screen yet (the sidebar button cannot be clicked from automation).
 - CI has no job for `scripts/fs-compat-test.sh` (it needs disk images and `hdiutil` attach, which a hosted runner may not permit).
 
@@ -105,6 +106,13 @@ Found by automated tests while building:
 - macOS temp dirs are `/var/folders` symlinked to `/private/var`; `canonicalize` returns the real path, so test
   fixtures must use canonical paths.
 - Disk images report `BusProtocol = "Disk Image"` and no `SolidState` (so media `Unknown`).
+
+GitHub Actions (2026-11-10):
+
+- The first push of `ci.yml` and a manual `workflow_dispatch` both ended `startup_failure` (0-2 s, no jobs, `path: BuildFailed`). GitHub says "likely a workflow file issue", but the file parses (the workflow is registered as `CI`, dispatch is accepted, `ruby -ryaml` loads it).
+- A throwaway branch with a trivial workflow (`echo` on `ubuntu-latest` and on `macos-latest`) also ended `startup_failure`. So the cause is not the workflow. Repository settings look fine (`actions/permissions`: enabled, all actions allowed, read-only default token).
+- Not determined: the billing endpoints need the `user` token scope, which was not granted. Most likely cause is Actions billing for private repositories (payment method / spending limit). **Next step for the user:** check GitHub Settings → Billing and plans → Actions, or run `gh auth refresh -h github.com -s user` so billing can be queried, or make the repo public (free hosted runners), and then re-run the workflow.
+- Lesson: `gh workflow run` only accepts workflow files that exist on the default branch; to test a throwaway workflow give it a `push` trigger on its own branch. The probe branch and its runs were deleted afterwards.
 
 Found in the first real-hardware session (2026-11-10, read back from the log and database, read-only):
 
@@ -160,7 +168,8 @@ Architecture overview and the per-folder map are in the README (section "Archite
 
 | Date | Commit | Change |
 |---|---|---|
-| 2026-11-10 | (this commit) | About window (sidebar button; version, git commit, data/log folders, promises), `build.rs`, headless UI render tests, GitHub Actions CI workflow, README CI section and badge. |
+| 2026-11-10 | (this commit) | Record that GitHub Actions cannot start (account-level `startup_failure`, probe workflow also fails); README note; next steps for the user. |
+| 2026-11-10 | `a4fd456` | About window (sidebar button; version, git commit, data/log folders, promises), `build.rs`, headless UI render tests, GitHub Actions CI workflow, README CI section and badge. |
 | 2026-11-10 | `5f7cc4d` | Add this notes file, repo `CLAUDE.md` with the "always update the notes" rule. |
 | 2026-11-10 | `30e7bdf` | README: record the first real-hardware session; tick only observed checklist items; document that source events no longer read up-to-date drives. |
 | 2026-11-10 | `1b5f874` | Ignore watcher events for excluded files; skip drive reads after an identical event-triggered scan; record drive/eject/setup/control events and the trigger of each scan. Added `scans_completed` to the snapshot. |

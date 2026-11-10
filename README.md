@@ -46,6 +46,12 @@ or a `v*` tag also builds `TwinSync.app` and attaches it to the run as an artifa
 On a private repository macOS minutes count 10x against the free allowance, so the workflow cancels superseded runs and
 skips documentation-only pushes.
 
+> **Status (2026-11-10): not running yet.** GitHub ends every run of this repository with `startup_failure` before any job starts,
+> even a two-line probe workflow (an `echo` on Ubuntu and on macOS), so the cause is the account or repository settings, not
+> this workflow file. The usual suspect is Actions billing for private repositories (Settings → Billing and plans → Actions:
+> payment method and spending limit). Until that is resolved the badge above stays red and the same checks have to be run
+> locally (`cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test`).
+
 State lives in `~/Library/Application Support/TwinSync/` (SQLite database and a lock file that prevents two
 copies of the app writing the same project). Logs are in `~/Library/Logs/TwinSync/twinsync.log` and contain
 metadata such as counts and status, never file contents.
