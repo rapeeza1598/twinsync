@@ -12,7 +12,7 @@ Last updated: 2026-11-10 (About window and CI workflow added; CI blocked at the 
 | | |
 |---|---|
 | What it is | macOS app in Rust (egui). One-way "Update Copy" from a Mac folder to two external drives. |
-| Repo | https://github.com/rapeeza1598/twinsync (**private**), branch `main`, pushed after every commit |
+| Repo | https://github.com/rapeeza1598/twinsync (**private**), branch `main`, pushed after every commit. GitHub About set: description "One Mac. Two drives. Files in sync. …", topics `rust macos backup file-sync egui external-drive` |
 | Size | about 9k lines in `src/`, about 4.3k in `tests/` |
 | Tests | **153 pass, 0 fail, 2 ignored** (the 2 are the real-filesystem tests, run by `scripts/fs-compat-test.sh`) |
 | CI | `.github/workflows/ci.yml` on a macOS runner: fmt, clippy, tests, release build; `bundle` job (app zip artifact) on manual run or `v*` tag. **Not running: every run ends `startup_failure`**, see section 5 |
@@ -168,7 +168,8 @@ Architecture overview and the per-folder map are in the README (section "Archite
 
 | Date | Commit | Change |
 |---|---|---|
-| 2026-11-10 | (this commit) | Record that GitHub Actions cannot start (account-level `startup_failure`, probe workflow also fails); README note; next steps for the user. |
+| 2026-11-10 | (this commit) | Set the GitHub repository About description and topics (no file changes besides this note). |
+| 2026-11-10 | `f471510` | Record that GitHub Actions cannot start (account-level `startup_failure`, probe workflow also fails); README note; next steps for the user. |
 | 2026-11-10 | `a4fd456` | About window (sidebar button; version, git commit, data/log folders, promises), `build.rs`, headless UI render tests, GitHub Actions CI workflow, README CI section and badge. |
 | 2026-11-10 | `5f7cc4d` | Add this notes file, repo `CLAUDE.md` with the "always update the notes" rule. |
 | 2026-11-10 | `30e7bdf` | README: record the first real-hardware session; tick only observed checklist items; document that source events no longer read up-to-date drives. |
