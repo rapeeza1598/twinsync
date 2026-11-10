@@ -43,14 +43,15 @@ scripts/fs-compat-test.sh                # real filesystems on disk images (see 
 The real-filesystem tests are ignored there; run `scripts/fs-compat-test.sh` yourself. A manual run (**Actions → CI → Run workflow**)
 or a `v*` tag also builds `TwinSync.app` and attaches it to the run as an artifact (ad-hoc signed, not notarized).
 
-On a private repository macOS minutes count 10x against the free allowance, so the workflow cancels superseded runs and
-skips documentation-only pushes.
+The repository is public, so hosted runners are free. If it ever goes private again, macOS minutes count 10x against the
+allowance; the workflow already cancels superseded runs and skips documentation-only pushes to stay cheap.
 
-> **Status (2026-11-10): not running yet.** GitHub ends every run of this repository with `startup_failure` before any job starts,
-> even a two-line probe workflow (an `echo` on Ubuntu and on macOS), so the cause is the account or repository settings, not
-> this workflow file. The usual suspect is Actions billing for private repositories (Settings → Billing and plans → Actions:
-> payment method and spending limit). Until that is resolved the badge above stays red and the same checks have to be run
-> locally (`cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test`).
+> **Status (2026-11-10): not running yet.** GitHub accepts the run but never starts a job: the run's annotation reads
+> *"The job was not started because your account is locked due to a billing issue."* That is a lock on the GitHub **account**,
+> not on this repository or this workflow: a two-line probe workflow failed the same way, and making the repository public did
+> not change it. Resolve it under GitHub → Settings → Billing and plans (a failed payment or a spending limit is the usual cause),
+> then re-run it (Actions → CI → Run workflow). Until then the badge stays red and the same checks have to be run locally
+> (`cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test`).
 
 State lives in `~/Library/Application Support/TwinSync/` (SQLite database and a lock file that prevents two
 copies of the app writing the same project). Logs are in `~/Library/Logs/TwinSync/twinsync.log` and contain

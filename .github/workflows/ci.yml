@@ -1,7 +1,7 @@
 name: CI
 
 # TwinSync only builds on macOS (it uses renameatx_np, F_FULLFSYNC and diskutil), so every job runs on a
-# macOS runner. On private repositories macOS minutes are billed at 10x, so this workflow is deliberately
+# macOS runner. If the repository is private, macOS minutes are billed at 10x, so this workflow is deliberately
 # frugal: docs-only changes are skipped, a newer push cancels the run before it, and the app bundle is built
 # only on request or for a version tag.
 on:

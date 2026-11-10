@@ -5,14 +5,14 @@ missing, and what changed when. **Update this file in the same commit as any cha
 [Keeping this current](#keeping-this-current)). The README describes the product for users; this file is for whoever
 works on it next.
 
-Last updated: 2026-11-10 (About window and CI workflow added; CI blocked at the account level).
+Last updated: 2026-11-10 (repo public; CI blocked by an account billing lock).
 
 ## 1. Status at a glance
 
 | | |
 |---|---|
 | What it is | macOS app in Rust (egui). One-way "Update Copy" from a Mac folder to two external drives. |
-| Repo | https://github.com/rapeeza1598/twinsync (**private**), branch `main`, pushed after every commit. GitHub About set: description "One Mac. Two drives. Files in sync. …", topics `rust macos backup file-sync egui external-drive` |
+| Repo | https://github.com/rapeeza1598/twinsync (**public** since 2026-11-10; it was private before), branch `main`, pushed after every commit. GitHub About set: description "One Mac. Two drives. Files in sync. …", topics `rust macos backup file-sync egui external-drive` |
 | Size | about 9k lines in `src/`, about 4.3k in `tests/` |
 | Tests | **153 pass, 0 fail, 2 ignored** (the 2 are the real-filesystem tests, run by `scripts/fs-compat-test.sh`) |
 | CI | `.github/workflows/ci.yml` on a macOS runner: fmt, clippy, tests, release build; `bundle` job (app zip artifact) on manual run or `v*` tag. **Not running: every run ends `startup_failure`**, see section 5 |
@@ -111,7 +111,8 @@ GitHub Actions (2026-11-10):
 
 - The first push of `ci.yml` and a manual `workflow_dispatch` both ended `startup_failure` (0-2 s, no jobs, `path: BuildFailed`). GitHub says "likely a workflow file issue", but the file parses (the workflow is registered as `CI`, dispatch is accepted, `ruby -ryaml` loads it).
 - A throwaway branch with a trivial workflow (`echo` on `ubuntu-latest` and on `macos-latest`) also ended `startup_failure`. So the cause is not the workflow. Repository settings look fine (`actions/permissions`: enabled, all actions allowed, read-only default token).
-- Not determined: the billing endpoints need the `user` token scope, which was not granted. Most likely cause is Actions billing for private repositories (payment method / spending limit). **Next step for the user:** check GitHub Settings → Billing and plans → Actions, or run `gh auth refresh -h github.com -s user` so billing can be queried, or make the repo public (free hosted runners), and then re-run the workflow.
+- **Cause found (after making the repo public, which did not help):** once the run could be created, the job's annotation read "The job was not started because your account is locked due to a billing issue." (read with `gh api repos/<owner>/<repo>/check-runs/<job id>/annotations`; `gh run view --log-failed` shows nothing because no step ever ran). The lock is on the **GitHub account**, so it affects public and private repositories alike. An earlier note here guessed it was private-repo billing and that going public would fix it; that was wrong.
+- The billing endpoints themselves need the `user` token scope, which was not granted, so the exact reason (failed payment, spending limit, ...) is unknown. **Next step for the user:** fix it under GitHub Settings → Billing and plans, then re-run the workflow (Actions → CI → Run workflow) and record the result here. Everything in the `ci.yml` is still untested until it runs.
 - Lesson: `gh workflow run` only accepts workflow files that exist on the default branch; to test a throwaway workflow give it a `push` trigger on its own branch. The probe branch and its runs were deleted afterwards.
 
 Found in the first real-hardware session (2026-11-10, read back from the log and database, read-only):
@@ -168,7 +169,8 @@ Architecture overview and the per-folder map are in the README (section "Archite
 
 | Date | Commit | Change |
 |---|---|---|
-| 2026-11-10 | (this commit) | Set the GitHub repository About description and topics (no file changes besides this note). |
+| 2026-11-10 | (this commit) | Repository made public at the user's request (history scanned first: no secrets). Corrected the CI diagnosis: the account is billing-locked, public does not fix it. README, notes and memory updated. |
+| 2026-11-10 | `4ac44de` | Set the GitHub repository About description and topics (no file changes besides this note). |
 | 2026-11-10 | `f471510` | Record that GitHub Actions cannot start (account-level `startup_failure`, probe workflow also fails); README note; next steps for the user. |
 | 2026-11-10 | `a4fd456` | About window (sidebar button; version, git commit, data/log folders, promises), `build.rs`, headless UI render tests, GitHub Actions CI workflow, README CI section and badge. |
 | 2026-11-10 | `5f7cc4d` | Add this notes file, repo `CLAUDE.md` with the "always update the notes" rule. |
