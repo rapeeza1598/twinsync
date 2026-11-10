@@ -1134,3 +1134,60 @@ fn auto_sync_notices_changes_debounces_and_copies() {
         "burst was coalesced, got {syncs} sync batches for 2 drives"
     );
 }
+
+#[test]
+fn a_folder_removed_from_the_source_is_reported_kept_and_can_be_dismissed() {
+    let h = H::new();
+    h.put("keep.txt", b"x");
+    fs::create_dir(h.src.join("untitled folder")).unwrap();
+    h.setup();
+    h.sync_and_wait();
+    for d in 0..2 {
+        assert!(h.dir(d).join("untitled folder").is_dir());
+    }
+    // renamed in the source: the old, empty folder must not linger unannounced
+    fs::rename(
+        h.src.join("untitled folder"),
+        h.src.join("prewedding-photo"),
+    )
+    .unwrap();
+    h.engine.send(Command::Preview);
+    let s = h.wait("orphan surfaced", |s| {
+        s.destinations.iter().all(|d| {
+            d.attention
+                .iter()
+                .any(|a| a.rel == rel("untitled folder") && a.action == "Removed from source")
+        })
+    });
+    assert!(
+        s.destinations[0]
+            .attention
+            .iter()
+            .any(|a| a.resolutions.contains(&Resolution::Acknowledge))
+    );
+    for d in 0..2 {
+        assert!(h.dir(d).join("untitled folder").is_dir(), "never deleted");
+    }
+    h.engine.send(Command::Resolve {
+        slot: Slot::A,
+        rel: rel("untitled folder"),
+        resolution: Resolution::Acknowledge,
+    });
+    h.wait("dismissed on A", |s| {
+        !s.destinations[0]
+            .attention
+            .iter()
+            .any(|a| a.rel == rel("untitled folder"))
+    });
+    assert!(
+        h.dir(0).join("untitled folder").is_dir(),
+        "dismissing keeps the folder"
+    );
+    assert!(
+        h.engine.snapshot().destinations[1]
+            .attention
+            .iter()
+            .any(|a| a.rel == rel("untitled folder")),
+        "each drive is dismissed separately"
+    );
+}

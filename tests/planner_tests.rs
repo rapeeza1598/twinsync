@@ -485,3 +485,52 @@ fn summary_counts_actions_and_bytes() {
     assert_eq!((s.copies, s.updates, s.attention), (1, 1, 1));
     assert_eq!(s.bytes_to_write, 30);
 }
+
+fn managed_dir(path: &str) -> (RelPath, DestEntry) {
+    (
+        rel(path),
+        DestEntry {
+            rel: rel(path),
+            kind: EntryKind::Dir,
+            status: EntryStatus::Synced,
+            synced_hash: None,
+            dest_fp: None,
+            src_fp: None,
+            synced_at: Some(1),
+            verified_at: None,
+        },
+    )
+}
+
+#[test]
+fn folder_that_left_the_source_is_surfaced_and_kept() {
+    // e.g. "untitled folder" created in Finder, synced, then renamed in the source
+    let c = Case::new(vec![dir("prewedding-photo")])
+        .managed(managed_dir("untitled folder"))
+        .observe("prewedding-photo", Observed::Missing);
+    let item = c
+        .plan()
+        .items
+        .into_iter()
+        .find(|i| i.rel == rel("untitled folder"))
+        .expect("an orphaned folder must not be silent");
+    assert_eq!(item.action, Action::SourceDeleted);
+    assert_eq!(item.kind, EntryKind::Dir);
+    assert!(!item.action.is_transfer(), "nothing is deleted or changed");
+    assert!(item.reason.contains("folder"), "{}", item.reason);
+}
+
+#[test]
+fn acknowledged_folder_removal_stays_quiet() {
+    let mut m = managed_dir("old-folder");
+    m.1.status = EntryStatus::Orphaned;
+    assert!(Case::new(vec![]).managed(m).plan().is_empty());
+}
+
+#[test]
+fn folder_under_an_unreadable_prefix_is_unknown_not_removed() {
+    let mut c = Case::new(vec![]).managed(managed_dir("locked/sub"));
+    c.source.complete = false;
+    c.source.unreadable = vec![rel("locked")];
+    assert!(c.plan().is_empty());
+}

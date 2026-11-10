@@ -254,9 +254,11 @@ pub fn plan(input: &PlanInput, source_generation: i64) -> Plan {
         }
     }
 
-    // Managed files that left the source. Only meaningful where the scan could read.
+    // Managed files and folders that left the source. Only meaningful where the scan could
+    // read. A folder TwinSync created and the user later renamed or removed would otherwise
+    // sit on the drive with nothing telling anyone it is there.
     for (rel, m) in input.manifest {
-        if source_by_rel.contains_key(rel) || m.kind != EntryKind::File {
+        if source_by_rel.contains_key(rel) {
             continue;
         }
         if !input.source.covers(rel)
@@ -266,10 +268,16 @@ pub fn plan(input: &PlanInput, source_generation: i64) -> Plan {
         }
         items.push(PlannedItem {
             rel: rel.clone(),
-            kind: EntryKind::File,
+            kind: m.kind,
             action: Action::SourceDeleted,
             size: 0,
-            reason: "no longer in the source; the copy on this drive is kept".into(),
+            reason: match m.kind {
+                EntryKind::File => "no longer in the source; the copy on this drive is kept",
+                EntryKind::Dir => {
+                    "folder is no longer in the source; the folder on this drive is kept"
+                }
+            }
+            .into(),
             expected_src: None,
             expected_dest: Observed::Missing,
         });
