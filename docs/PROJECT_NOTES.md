@@ -5,7 +5,7 @@ missing, and what changed when. **Update this file in the same commit as any cha
 [Keeping this current](#keeping-this-current)). The README describes the product for users; this file is for whoever
 works on it next.
 
-Last updated: 2026-11-10 (repo public; CI blocked by an account billing lock).
+Last updated: 2026-11-11 (CI re-run: still blocked by the account billing lock).
 
 ## 1. Status at a glance
 
@@ -113,6 +113,7 @@ GitHub Actions (2026-11-10):
 - A throwaway branch with a trivial workflow (`echo` on `ubuntu-latest` and on `macos-latest`) also ended `startup_failure`. So the cause is not the workflow. Repository settings look fine (`actions/permissions`: enabled, all actions allowed, read-only default token).
 - **Cause found (after making the repo public, which did not help):** once the run could be created, the job's annotation read "The job was not started because your account is locked due to a billing issue." (read with `gh api repos/<owner>/<repo>/check-runs/<job id>/annotations`; `gh run view --log-failed` shows nothing because no step ever ran). The lock is on the **GitHub account**, so it affects public and private repositories alike. An earlier note here guessed it was private-repo billing and that going public would fix it; that was wrong.
 - The billing endpoints themselves need the `user` token scope, which was not granted, so the exact reason (failed payment, spending limit, ...) is unknown. **Next step for the user:** fix it under GitHub Settings → Billing and plans, then re-run the workflow (Actions → CI → Run workflow) and record the result here. Everything in the `ci.yml` is still untested until it runs.
+- **Re-run on 2026-11-11** (`workflow_dispatch`, run 43049947916): same annotation, job ended after 3 s with 0 steps. Still locked; nothing to change in the repo. Retry with `gh workflow run ci.yml --ref main` and read `gh api repos/rapeeza1598/twinsync/check-runs/<job id>/annotations`.
 - Lesson: `gh workflow run` only accepts workflow files that exist on the default branch; to test a throwaway workflow give it a `push` trigger on its own branch. The probe branch and its runs were deleted afterwards.
 
 Found in the first real-hardware session (2026-11-10, read back from the log and database, read-only):
@@ -169,7 +170,8 @@ Architecture overview and the per-folder map are in the README (section "Archite
 
 | Date | Commit | Change |
 |---|---|---|
-| 2026-11-10 | (this commit) | Repository made public at the user's request (history scanned first: no secrets). Corrected the CI diagnosis: the account is billing-locked, public does not fix it. README, notes and memory updated. |
+| 2026-11-11 | (this commit) | Re-ran CI: still `account is locked due to a billing issue`; recorded in the notes. |
+| 2026-11-10 | `6a9ccb0` | Repository made public at the user's request (history scanned first: no secrets). Corrected the CI diagnosis: the account is billing-locked, public does not fix it. README, notes and memory updated. |
 | 2026-11-10 | `4ac44de` | Set the GitHub repository About description and topics (no file changes besides this note). |
 | 2026-11-10 | `f471510` | Record that GitHub Actions cannot start (account-level `startup_failure`, probe workflow also fails); README note; next steps for the user. |
 | 2026-11-10 | `a4fd456` | About window (sidebar button; version, git commit, data/log folders, promises), `build.rs`, headless UI render tests, GitHub Actions CI workflow, README CI section and badge. |
